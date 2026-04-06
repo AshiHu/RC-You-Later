@@ -1,10 +1,21 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Text;
+
+/* Script ou l'on ajoute le système de sauvegarde qui saauvegarde le temps et le meilleur score, il permet aussi de 
+de changer le fomat de sauvegarde en base64 pour éviter les changements manuels du fichier de sauvegarde. */
 
 public static class Timer
 {
     private static readonly Stopwatch stopwatch = new();
     private static List<long> steps = new();
+
+    // La sauvegarde se fait dans dans le dossier persistant de l'application, avec un nom de fichier score.txt
+    private static readonly string savePath = Path.Combine(
+        UnityEngine.Application.persistentDataPath, "score.txt"
+    );
 
     public static bool IsRunning
     {
@@ -26,9 +37,6 @@ public static class Timer
         return steps[index] * 0.001f;
     }
 
-    /// <summary>
-    /// Reset the timer and remove any steps.
-    /// </summary>
     public static void Reset()
     {
         stopwatch.Reset();
@@ -52,13 +60,81 @@ public static class Timer
 
     public static void Save()
     {
-        // TODO : save our time steps (line 7 of this script) inside a file.
+        if (steps.Count == 0) return;
+
+        // Le temps final = dernier step
+        long newFinalTime = steps[steps.Count - 1];
+
+        // Création d'une sauvegarde de meilleur temps : si un fichier existe déjà, on le lit et on compare le temps final
+        if (File.Exists(savePath))
+        {
+            List<long> existingSteps = LoadStepsFromFile();
+            if (existingSteps != null && existingSteps.Count > 0)
+            {
+                long oldFinalTime = existingSteps[existingSteps.Count - 1];
+                if (newFinalTime >= oldFinalTime)
+                {
+                    // Pas un meilleur temps, on ne sauvegarde pas
+                    return;
+                }
+            }
+        }
+
+        // Construire la chaîne : une valeur par ligne
+        StringBuilder sb = new StringBuilder();
+        foreach (long step in steps)
+        {
+            sb.AppendLine(step.ToString());
+        }
+
+        // Mis en place du système de sauvegarde en base64 pour éviter les changement manuels du fichier de sauvegarde
+        string plainText = sb.ToString();
+        string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(plainText));
+
+        File.WriteAllText(savePath, encoded);
     }
 
+        // elle appelle LoadStepsFromFile() et si le résultat n'est pas null, elle remplace steps par les valeurs chargées
     public static void Load()
     {
-        // TODO : load our time steps from a file (if we have any)
-        // and store them inside our steps variable (line 7 of this script)
-        // to show them to the player before starting a race.
+        List<long> loaded = LoadStepsFromFile();
+        if (loaded != null)
+        {
+            steps = loaded;
+        }
+    }
+
+    // Méthode privée partagée par Save et Load
+    private static List<long> LoadStepsFromFile()
+    {
+        if (!File.Exists(savePath)) return null;
+
+        try
+        {
+            string encoded = File.ReadAllText(savePath);
+
+            // Décodage depuis fichier qui est en Base64
+            string plainText = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+
+            List<long> loaded = new List<long>();
+            string[] lines = plainText.Split(
+                new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries
+            );
+
+            foreach (string line in lines)
+            {
+                if (long.TryParse(line, out long value))
+                {
+                    loaded.Add(value);
+                }
+            }
+
+            return loaded.Count > 0 ? loaded : null;
+        }
+        catch
+        {
+            // Fichier corrompu ou invalide
+            return null;
+        }
     }
 }
