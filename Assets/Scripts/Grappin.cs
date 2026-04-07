@@ -1,100 +1,125 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 
+[RequireComponent(typeof(Rigidbody))]
 public class Grappin : MonoBehaviour
 {
     [Header("Références")]
-    // GLISSE TON SCRIPT DE VOITURE ICI DANS L'INSPECTEUR
-    public RemoteControlCarController carController;
+    [SerializeField] private RemoteControlCarController controleurVoiture;
+    [SerializeField] private Transform pointAttacheCorde;
+    [SerializeField] private LineRenderer affichageCorde;
+    [SerializeField] private LayerMask couchesAccrochables;
 
-    public Transform gunTip;
-    public LayerMask whatIsGrappable;
-    private LineRenderer lr;
-    private Rigidbody rb;
-    private SpringJoint joint;
-    private Vector3 grapplePoint;
+    [Header("Réglages Physique")]
+    [SerializeField] private float distanceMaximale = 50f;
+    [SerializeField] private float forceTension = 100f;
+    [SerializeField] private float amortissementTension = 50f;
+    [SerializeField] private float vitesseRotationAuto = 15f;
 
-    [Header("Réglages")]
-    public float maxDistance = 100f;
-    public float swingForce = 40f;
-    public static bool isGrappling;
-    private float originalDrag;
+    private Rigidbody corpsPhysique;
+    private ConfigurableJoint articulationCorde;
+    private Vector3 pointImpactGrappin;
+    private bool estEnTrainDeGrappiner;
+
+    // Accesseur pour savoir de l'extérieur si le grappin est actif
+    public bool EstActif => estEnTrainDeGrappiner;
 
     void Awake()
     {
-        lr = GetComponentInChildren<LineRenderer>();
-        rb = GetComponent<Rigidbody>();
+        corpsPhysique = GetComponent<Rigidbody>();
+        if (affichageCorde == null) affichageCorde = GetComponentInChildren<LineRenderer>();
     }
 
     void Update()
     {
-        if (Input.GetMouseButtonDown(0)) StartSwing();
-        if (Input.GetMouseButtonUp(0)) StopSwing();
+        // On utilise les entrées souris classiques
+        if (Input.GetMouseButtonDown(0)) LancerGrappin();
+        if (Input.GetMouseButtonUp(0)) ArreterGrappin();
+    }
 
-        if (joint != null)
+    void FixedUpdate()
+    {
+        if (estEnTrainDeGrappiner)
         {
-            // 1. POUSSÉE MANUELLE
-            float v = Input.GetAxis("Vertical");
-            float h = Input.GetAxis("Horizontal");
-            Vector3 moveInput = (transform.forward * v + transform.right * h).normalized;
-            rb.AddForce(moveInput * swingForce, ForceMode.Acceleration);
+            OrienterVoitureVersMouvement();
+        }
+    }
 
-            // 2. STABILISATION (Garder les roues vers le bas)
-            if (rb.linearVelocity.magnitude > 1f)
+    void LateUpdate()
+    {
+        DessinerCorde();
+    }
+
+    private void LancerGrappin()
+    {
+        Ray rayonSortant = Camera.main.ScreenPointToRay(Input.mousePosition);
+
+        if (Physics.Raycast(rayonSortant, out RaycastHit infoImpact, distanceMaximale, couchesAccrochables))
+        {
+            estEnTrainDeGrappiner = true;
+            pointImpactGrappin = infoImpact.point;
+
+            // On coupe le script de pilotage pour ne pas interférer avec la physique du grappin
+            if (controleurVoiture != null) controleurVoiture.enabled = false;
+
+            // Création de l'articulation physique
+            articulationCorde = gameObject.AddComponent<ConfigurableJoint>();
+            articulationCorde.autoConfigureConnectedAnchor = false;
+            articulationCorde.connectedAnchor = pointImpactGrappin;
+
+            // On laisse la liberté de mouvement pour que les ressorts (Drive) tirent l'objet
+            articulationCorde.xMotion = ConfigurableJointMotion.Free;
+            articulationCorde.yMotion = ConfigurableJointMotion.Free;
+            articulationCorde.zMotion = ConfigurableJointMotion.Free;
+
+            JointDrive reglageRessort = new JointDrive
             {
-                Quaternion stableRot = Quaternion.LookRotation(rb.linearVelocity.normalized, Vector3.up);
-                transform.rotation = Quaternion.Slerp(transform.rotation, stableRot, Time.deltaTime * 10f);
-            }
+                positionSpring = forceTension,
+                positionDamper = amortissementTension,
+                maximumForce = float.MaxValue
+            };
 
-            // 3. ANTI-VIBRATION
-            rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, Time.deltaTime * 5f);
+            articulationCorde.xDrive = reglageRessort;
+            articulationCorde.yDrive = reglageRessort;
+            articulationCorde.zDrive = reglageRessort;
+
+            articulationCorde.targetPosition = Vector3.zero;
+
+            if (affichageCorde != null) affichageCorde.positionCount = 2;
         }
     }
 
-    void LateUpdate() { DrawRope(); }
-
-    void StartSwing()
+    private void ArreterGrappin()
     {
-        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, maxDistance, whatIsGrappable))
+        if (!estEnTrainDeGrappiner) return;
+
+        estEnTrainDeGrappiner = false;
+
+        if (controleurVoiture != null) controleurVoiture.enabled = true;
+        if (affichageCorde != null) affichageCorde.positionCount = 0;
+        if (articulationCorde != null) Destroy(articulationCorde);
+    }
+
+    private void OrienterVoitureVersMouvement()
+    {
+        // On récupère la direction actuelle de la voiture
+        Vector3 velocite = corpsPhysique.linearVelocity;
+        velocite.y = 0; // On ignore la hauteur pour la rotation
+
+        if (velocite.sqrMagnitude > 0.1f)
         {
-            isGrappling = true;
-            grapplePoint = hit.point;
-
-            // --- ON DÉSACTIVE LA CONDUITE ---
-            if (carController != null) carController.enabled = false;
-
-            // Configuration du Joint
-            joint = gameObject.AddComponent<SpringJoint>();
-            joint.autoConfigureConnectedAnchor = false;
-            joint.connectedAnchor = grapplePoint;
-
-            float dist = Vector3.Distance(transform.position, grapplePoint);
-            joint.maxDistance = dist * 0.8f;
-            joint.minDistance = dist * 0.2f;
-            joint.spring = 7f;
-            joint.damper = 10f;
-            joint.massScale = 1f;
-
-            lr.positionCount = 2;
+            Quaternion rotationCible = Quaternion.LookRotation(velocite.normalized, Vector3.up);
+            corpsPhysique.MoveRotation(Quaternion.Slerp(corpsPhysique.rotation, rotationCible, Time.fixedDeltaTime * vitesseRotationAuto));
         }
+
+        // On stabilise la rotation pour éviter que la voiture ne tourbillonne
+        corpsPhysique.angularVelocity = Vector3.Lerp(corpsPhysique.angularVelocity, Vector3.zero, Time.fixedDeltaTime * 5f);
     }
 
-    void StopSwing()
+    private void DessinerCorde()
     {
-        isGrappling = false;
+        if (!estEnTrainDeGrappiner || affichageCorde == null) return;
 
-        // --- ON RÉACTIVE LA CONDUITE ---
-        if (carController != null) carController.enabled = true;
-
-        lr.positionCount = 0;
-        if (joint != null) Destroy(joint);
-    }
-
-    void DrawRope()
-    {
-        if (!joint) return;
-        lr.SetPosition(0, gunTip.position);
-        lr.SetPosition(1, grapplePoint);
+        affichageCorde.SetPosition(0, pointAttacheCorde.position);
+        affichageCorde.SetPosition(1, pointImpactGrappin);
     }
 }

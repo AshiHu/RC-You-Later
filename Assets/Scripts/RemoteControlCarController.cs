@@ -16,6 +16,9 @@ public class RemoteControlCarController : MonoBehaviour
     [SerializeField]
     private float breakForce = 10.0f;
 
+    /// <summary>
+    /// https://docs.unity3d.com/2023.2/Documentation//ScriptReference/WheelFrictionCurve.html
+    /// </summary>
     [SerializeField]
     private AnimationCurve sidewaysFriction = new(
         new Keyframe(0.0f, 0.0f),
@@ -51,6 +54,11 @@ public class RemoteControlCarController : MonoBehaviour
     private SphereCollider sphereCollider = null;
     private new Rigidbody rigidbody = null;
 
+    /// <summary>
+    /// Surface's normal below this threshold will be treated as ground (1: all, 0: half, -1: none).
+    /// Default is -0.25f, meaning up until 67.5°.
+    /// </summary>
+
     private float gravityGroundThreshold = -0.25f;
     private Vector3 averageGroundNormal = Vector3.up;
     private Vector3 previousLinearVelocity = Vector3.zero;
@@ -76,6 +84,8 @@ public class RemoteControlCarController : MonoBehaviour
 
     private void Start()
     {
+        // https://docs.unity3d.com/Packages/com.unity.inputsystem@1.0/api/UnityEngine.InputSystem.InputActionAsset.html
+        // Player/Move
         playerMoveAction = InputSystem.actions.FindAction("351f2ccd-1f9f-44bf-9bec-d62ac5c5f408", true);
     }
 
@@ -88,31 +98,49 @@ public class RemoteControlCarController : MonoBehaviour
     private void FixedUpdate()
     {
         Vector3 linearVelocity = rigidbody.linearVelocity;
+        // https://docs.unity3d.com/Packages/com.unity.inputsystem@1.8/manual/Workflow-Actions.html
         Vector2 playerMoveInput = playerMoveAction.ReadValue<Vector2>();
         float angle = playerMoveInput.x * frontWheelMaxAngle;
 
         if (IsGrounded)
         {
+            // Compute the average ground normal based on our ground contact point(s).
             averageGroundNormal = ComputeAverageGroundNormal(averageGroundNormal);
+            // Rotate our ground's normal direction toward the average ground normal.
             GroundNormal = Vector3.RotateTowards(GroundNormal, averageGroundNormal, maxRotRadPerSec * Time.fixedDeltaTime, 0f).normalized;
 
+            // Project our direction's vector onto the ground plane and re-normalized it.
+            // https://docs.unity3d.com/2020.3/Documentation//ScriptReference/Vector3.ProjectOnPlane.html
+
             Vector3 groundProjectedForwardDirection = Vector3.ProjectOnPlane(ForwardDirection, GroundNormal).normalized;
+
+            // Rotate our forward direction vector toward the projected version.
             ForwardDirection = Vector3.RotateTowards(ForwardDirection, groundProjectedForwardDirection, maxRotRadPerSec * Time.fixedDeltaTime, 0f).normalized;
 
+            // Compute the forward component of our velocity.
             float forwardVelocity = Vector3.Dot(ForwardDirection, linearVelocity);
 
+            // Rotate our forward vector based on player's input.
             if (Mathf.Abs(playerMoveInput.x) > 0.01f)
             {
                 float angleOverSpeedRatio = 1.0f;
                 float absForwardVelocity = Mathf.Abs(forwardVelocity);
                 if (absForwardVelocity < minForwardSpeedForRotation) angleOverSpeedRatio = absForwardVelocity / minForwardSpeedForRotation;
-
+                
+                // Create a Quaternion that will store the rotation we want to apply.
                 Quaternion rotation = Quaternion.AngleAxis(angle * angleOverSpeedRatio * Time.fixedDeltaTime, GroundNormal);
                 ForwardDirection = rotation * ForwardDirection;
             }
-
+            
+            // Compute our right vector using our forward and (reversed) ground normal.
+            // https://docs.unity3d.com/2020.3/Documentation//ScriptReference/Vector3.Cross.html
             RightDirection = Vector3.Cross(ForwardDirection, -GroundNormal).normalized;
 
+            // Sideways Friction //
+
+            // How much our velocity is slipping velocity?
+            // 0    means 100% of our velocity is perpendicular to our forward direction (100% sliping).
+            // -1/1 means 0% is perpendicular and thus 100% parallel (no sliping).
             float slip = Vector3.Dot(RightDirection, linearVelocity.normalized);
             float friction = sidewaysFriction.Evaluate(Mathf.Abs(slip));
             float frictionForce = friction * stiffness * -Mathf.Sign(slip);
@@ -127,6 +155,7 @@ public class RemoteControlCarController : MonoBehaviour
             }
             else
             {
+                // Breaking Force/Motor //
                 float breakingForce = 0.0f;
                 float breakingDirection = -Mathf.Sign(Vector3.Dot(ForwardDirection, linearVelocity));
 
@@ -138,6 +167,7 @@ public class RemoteControlCarController : MonoBehaviour
         }
         else
         {
+            // NOT Grounded
             averageGroundNormal = -GravityDirection;
             Quaternion rigidbodyRotation = Quaternion.FromToRotation(previousLinearVelocity.normalized, rigidbody.linearVelocity.normalized);
 
@@ -152,8 +182,12 @@ public class RemoteControlCarController : MonoBehaviour
                 float absForwardVelocity = Mathf.Abs(forwardVelocity);
                 if (absForwardVelocity < minForwardSpeedForRotation) angleOverSpeedRatio = absForwardVelocity / minForwardSpeedForRotation;
 
+                // Create a Quaternion that will store the rotation we want to apply.
                 Quaternion rotation = Quaternion.AngleAxis(angle * angleOverSpeedRatio * airRotationControl * Time.fixedDeltaTime, GroundNormal);
                 ForwardDirection = rotation * ForwardDirection;
+
+                // Recompute our right vector using our forward and (reversed) ground normal.
+                // https://docs.unity3d.com/2020.3/Documentation//ScriptReference/Vector3.Cross.html
                 RightDirection = Vector3.Cross(ForwardDirection, -GroundNormal).normalized;
             }
         }
@@ -216,6 +250,11 @@ public class RemoteControlCarController : MonoBehaviour
 
             for (int i = 0; i < contacts.Length; i++)
             {
+                // Does this contact point should be considered as ground?
+                // First let's retrieve the surface normal.
+                // N.b.: ContactPoint.normal represent the "average" normal between the two collider's surface's normal.
+
+                // https://docs.unity3d.com/6000.0/Documentation/ScriptReference/Collider.Raycast.html
                 Ray ray = new(transform.position, (contacts[i].point - transform.position).normalized);
                 if (collider.Raycast(ray, out RaycastHit hitInfo, float.MaxValue))
                 {
