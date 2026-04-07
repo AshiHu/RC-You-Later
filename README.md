@@ -46,3 +46,12 @@ Et aussi rajoute à la fin de ce fichier **README.md** ce que tu a rajouté dans
 Il y a quelque assets dans le dossier des Models mais tu peux en importer d'autres (je te recommande à nouveau le site de [Kenney](https://kenney.nl/assets)).
 
 Ce que tu a rajouté dans le projet :
+
+- Ajout de foliage arbres et fleurs.
+
+- Modification du level design pour tester la nouvelle mécanique intégrée.
+
+- Nouvelle mécanique de grappin via le clic gauche de la souris :
+   L’activation du grappin suspend le script de déplacement de base.
+   Le grappin nous tire et nous fait faire un balancier avec la vélocité que l'on avait avant de l'activer.
+   
