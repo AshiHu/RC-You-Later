@@ -14,7 +14,7 @@ public static class Timer
 
     // La sauvegarde se fait dans dans le dossier persistant de l'application, avec un nom de fichier score.txt
     private static readonly string savePath = Path.Combine(
-        UnityEngine.Application.persistentDataPath, "score.txt"
+        UnityEngine.Application.dataPath, "..", "score.txt"
     );
 
     public static bool IsRunning
